@@ -1,0 +1,585 @@
+---
+title: "Assignment 2: Base and Product Line Pricing Analysis"
+author: "Group 11: Christina Wang, Kailin Fu, Shun Guan, Sylvia Lu, Yiran Huang"
+date: "April 23, 2020"
+output:
+  pdf_document:
+    number_sections: yes
+    toc: yes
+urlcolor: blue
+graphics: yes
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA, message = FALSE, eval = TRUE,
+                      fig.width = 4.5, fig.height = 3, fig.align = "right")
+```
+
+\setlength{\parskip}{6pt}
+\newpage
+
+
+
+
+# Overview
+
+Our marketing-analytic consulting task is to conduct a base pricing analysis for P&G's flagship laundry detergent brand, Tide. The main questions to address are:
+
+1. What is the extent of cannibalization within the Tide product line? 
+2. Does Tide face a competitive threat from Wisk? 
+3. How do you evaluate the current pricing tactics? Do you recommend changes?
+
+We have access to scanner data `Detergent.RData` in the laundry detergent category across 86 stores of a retail chain in Chicago. The data include weekly sales and price information for three products --- Tide 128 oz, Tide 64 oz, Wisk 64 oz --- across the 86 stores. The data are available for up to 300 weeks (the exact number of weeks included in the data varies across stores).
+
+The variables in the data set are:
+
+\medskip
+
+-------------   -----------------------------------------------------
+`store`         Store id number
+`week`          Week
+`acv`           ACV (all commodity volume), in $1,000
+`promoflag`     = 1 if any product in the category was on promotion
+`q_tide128`     Tide 128 oz: unit sales
+`p_tide128`     Tide 128 oz: price ($)
+`q_tide64`      Tide 64 oz: unit sales
+`p_tide64`      Tide 64 oz: price ($)
+`q_wisk64`      Wisk 64 oz: unit sales
+`p_wisk64`      Wisk 64 oz: price ($)
+-------------   -----------------------------------------------------
+
+\medskip
+
+Note that Wisk was discontinued in 2017 in favor of Persil.
+
+\newpage
+
+
+
+
+# Data description
+
+The summary statistics and price gap histograms are first reported to test the ability to estimate demand models for the products. Several R packages are used for the study.
+
+```{r, include = TRUE}
+    library(ggplot2)
+    library(tidyverse)
+    library(dplyr)
+    library(tidyr)
+    library(lfe)
+```
+
+```{r, include = FALSE, eval = FALSE}
+    detergent_df %>%
+    summarize(sales_tide128 = sum(q_tide128*p_tide128),
+            sales_tide64 = sum(q_tide64*p_tide64),
+            sales_wisk64 = sum(q_wisk64*p_wisk64),
+            sales_total = sum(q_tide128*p_tide128)+sum(q_tide64*p_tide64)+sum(q_wisk64*p_wisk64),
+            sales_tide128_pct = sales_tide128/sales_total,
+            sales_tide64_pct = sales_tide64/sales_total,
+            sales_wisk64_pct = sales_wisk64/sales_total)
+    
+    
+    #tide 128 market share: 0.5685699
+    #tide 64 market share: 0.2633647	
+    #wisk 64 market share: 0.1680654
+```
+
+**Market Share and Price Summary**
+```{r}
+load("Detergent.RData")
+detergent_df_long = detergent_df %>%
+   pivot_longer(cols = q_tide128:p_wisk64,
+                    names_to = c("variable", "product"), names_sep = "_") %>%
+   pivot_wider(id_cols = c(product, store, week),
+                   names_from = variable, values_from = value)
+detergent_product <- detergent_df_long %>% group_by(product)
+revenue = sum(detergent_product$p*detergent_product$q)
+detergent_product_summary <- detergent_product %>% summarise(TotalSales = sum(p*q),
+                              TotalSalesPct = sum(p*q)/revenue, MeanPrice = mean(p),
+                              MedianPrice = median(p), SdPrice = sd(p))
+print(detergent_product_summary)
+```
+\medskip
+
+As shown in the summary table, Tide 128 oz has a market share of 56.86%, Tide 64 oz has a market share of 26.34% and Wisk 64 oz has a market share of 16.81%.
+
+The mean prices for Tide 128 oz, Tide 64 oz and Wisk 64 oz are $8.36, $4.37, and $4.07, respectively. The median prices are $8.48, $4.42 and $4.19, and the standard deviations are $0.76, $0.40 and $0.49, respectively.
+
+\medskip
+
+**Price Gap**
+```{r, fig.width = 6, fig.height = 4, fig.align = "center"}
+    Tide_diff_df = detergent_df
+    Tide_diff_df$p_diff_tide128 = Tide_diff_df$p_tide128 - Tide_diff_df$p_tide64
+    Tide_diff_df$p_diff_wisk64 = Tide_diff_df$p_wisk64 - Tide_diff_df$p_tide64
+    Tide_diff_df = Tide_diff_df[,c("week", "p_diff_tide128",  "p_diff_wisk64")] %>% 
+    pivot_longer(cols = p_diff_tide128:p_diff_wisk64,
+                 names_to = c("Type of Value", "Type of Date", "Diff_from_Product"),
+                 names_sep = "_")
+    Tide_diff_df = Tide_diff_df[,c("week", "Diff_from_Product",  "value")]
+    p <- ggplot(Tide_diff_df, aes(x=value, color=Diff_from_Product)) +
+      geom_histogram(fill="white")
+    print(p)
+```
+\begin{center}
+Figure 1: Price Gap Histgram
+\end{center}
+\medskip
+
+```{r}   
+    Tide_diff_df %>% 
+      group_by(Diff_from_Product) %>% 
+      summarize(mean_price_diff = mean(value), sd_price_diff = sd(value))
+    # We can see that wisk is a little bit cheaper than tide in most cases.
+    # Tide128 is higher than 64 oz about 4 dollars for most cases.
+```
+
+\medskip
+
+It appears that the price of 128oz Tide varies in a broader range than the other two products. Our intuition suspects this could be due to promotions or geographic difference. 
+
+It appears that the price gap between any two given products falls within a certain range, and we believe brand managers deliberately manage the price gap as it is part of their pricing strategy. The fluctuations could be a result of promotions and the different locations. Another interesting analysis to do would be review the price gap by store or chain, and how it evolves over time.
+
+Response to question regarding our ability to estimate demand models:
+There are 44235 observations (by product) in our statistics and we capture a range of different price points by product. We should be able to build a log-liner demand model with our data.
+
+The standard deviation of the prices are within $1 for Tide 128oz and $0.5 for the other two products. Most stores keep a $4 price gap between Tide 128oz and Tide 64oz, and similar price for Tide 64oz and Wisk 64oz. Therefore, the data is good to estimate demand given the relatively stable price with established price gaps.
+
+It is a good set for research.
+
+\medskip
+
+\newpage
+
+
+
+
+# Demand estimation
+
+*Sales velocity* is defined as the ratio of units sales and ACV (all commodity volume),
+$$\text{velocity}=\frac{\text{unit sales}}{\text{ACV}}.$$
+
+**The purpose of dividing unit sales by ACV to construct the dependent variable**
+
+The sales velocity tells how well a product really sells. The sales velocity looks at the sales rate with the ratio of the unit sales to the all commodity volumn. The dependent variable is separated from the inflation, or when the ACV fluctuates. The sales velocity is a better variable to compare between different products, retailers and sales channels within the same market.
+
+## Basic demand model
+
+Log-linear demand models are estimated for the two Tide products (128 and 64 oz) by regressing the log of velocity on all prices (own and competing products).
+
+\medskip
+
+**Tide 128 oz**
+```{r}
+tide128lm = glm(log(q_tide128/acv) ~ log(p_tide128) + log(p_tide64) +log(p_wisk64),
+                data = detergent_df)
+summary(tide128lm)
+```
+
+\medskip
+
+**Tide 64 oz**
+```{r}
+tide64lm = glm(log(q_tide64/acv) ~  log(p_tide64) + log(p_tide128) + log(p_wisk64),
+               data = detergent_df)
+summary(tide64lm)
+```
+
+\medskip
+
+**Regression plot**
+```{r, fig.width = 6, fig.height = 4, fig.align = "center"}
+detergent_df %>% 
+  select("store":"p_tide64") %>% 
+  pivot_longer(cols = q_tide128:p_tide64, names_to = c("variable", "product"),
+               names_sep = "_") %>% 
+  pivot_wider(id_cols = c(product, store, week, acv),
+                   names_from = variable, values_from = value)  %>%
+  mutate(velocity = q/acv) %>% 
+  ggplot(data = ., aes(x = log(p), y = log(velocity), color = product)) + 
+  geom_point(alpha = 0.5, size = 0.1) + 
+  geom_smooth(method = "lm", se = FALSE)
+
+```
+\begin{center}
+Figure 2: Linear Regression on Log(Velocity) vs Log(price) base model for Tide 128 oz and Tide 64 oz
+\end{center}
+
+\medskip
+With 1% of the Tide 128 oz price increase and others fixed, the sales velocity for the Tide 128 oz would decrese by -4.597%. The price elasticity for Tide 128 oz is -4.597. The demand is much more elastic than expected. The customers can purchase the substitutes with similar unit price (price per oz), such as the Tide 64 oz or the Wisk 64 oz.
+
+With 1% of the Tide 64 oz price increase and others fixed, the sales velocity for the Tide 128 oz would increase by 0.287%. With 1% of the Wisk 64 oz price increase and others fixed, the sales velocity for the Tide 128 oz would increase by 0.151%. The estimates are as expected. When the price for the smaller volumn products increase, the substitutes are either with same brand but different size or with same size but different brand. The sales for both kind of substitutes would increase (positive sign for the coefficient estimate for the Tide 128 oz sales velocity). But the customers might purchase the similar size over the same brand different size for similar purchase cycles or for the price decrease for the same product, which leads to lower estimate coefficients for the cross elasticity for the Tide 128 oz.
+
+\medskip
+
+
+## Time trend
+
+The log-linear demand models are re-estimated for the two Tide products including a time trend. The `week` variable was used as a time trend.
+
+\medskip
+
+**Tide 128 oz**
+```{r}
+tide128lm = glm(log(q_tide128/acv) ~ log(p_tide128) + log(p_tide64) +log(p_wisk64) + week,
+                data = detergent_df)
+summary(tide128lm)
+```
+
+\medskip
+
+**Tide 64 oz**
+```{r}
+tide64lm = glm(log(q_tide64/acv) ~  log(p_tide64) + log(p_tide128) + log(p_wisk64) + week,
+               data = detergent_df)
+summary(tide64lm)
+```
+
+\medskip
+
+**Regression Plot**
+```{r, fig.width = 6, fig.height = 4, fig.align = "center"}
+detergent_df %>% 
+  select("store":"p_tide64") %>% 
+  pivot_longer(cols = q_tide128:p_tide64, names_to = c("variable", "product"),
+               names_sep = "_") %>% 
+  pivot_wider(id_cols = c(product, store, week, acv),
+                   names_from = variable, values_from = value)  %>%
+  mutate(velocity = q/acv) %>% 
+  ggplot(data = ., aes(x = week, y = log(velocity), color = product)) + 
+  geom_point(alpha = 0.5, size = 0.1) + 
+  geom_smooth(method = "lm", se = FALSE)
+
+```
+\begin{center}
+Figure 3: Linear Regression with time trends for Tide 128 oz and Tide 64 oz detergents
+\end{center}
+
+\medskip
+
+**The importance of the time trend**
+
+Sales are not very clearly trending over time about tide128, but has clear impact about tide 64
+The week coefficients have small enough P value to reject H0, but the estimate itself is very small. Even with week 52, the log(velocity) is only 13%.
+
+Now it makes more sense as a 1% increase in Wisk 64oz price will lead to 0.35% increase of Tide 64oz price (vs. a decrease of 0.87% in the previous model without time stamp). Now we can analyze elasticity based on an aligned timeframe, which helps us to eliminate misaligned information. It is an improvement compared to the basic model specification.
+
+\medskip
+We can see the time trends effect for Tide 128 oz and Tide 64 oz. However, it is hard to justified with linear regression. Detergents demand is related to the seasons as the demand is higher in the summer. Further study is needed to understand the time trends. For the pricing study, the linear effect of week is used to separate the time trends effect for better model estimation for the elasticity and pricing strategies.
+
+\medskip
+
+## Focus on non-promoted weeks
+
+In the data, weeks where at least one product was promoted are flagged by the dummy variable `promoflag`. A new data set was filtered that only includes store-weeks in which none of the products were promoted.
+
+The log-linear demand models were re-estimated with a time-trend for the two Tide products only using data from non-promoted store-weeks.
+
+\medskip
+
+**Promotion frequency**
+```{r}
+detergent_df_nonpromo = detergent_df %>% filter(promoflag == 0)
+frac_promo = 1-nrow(detergent_df_nonpromo)/nrow(detergent_df)
+print(frac_promo)
+```
+
+\medskip
+The stores promoted at least one of the detergents for 81.9% of the weeks. With such a high frequence, it is needed to analyze the base price for the elasticities for the products.
+
+\medskip
+
+**Tide 128 oz**
+```{r}
+tide128lm = glm(log(q_tide128/acv) ~ log(p_tide128) + log(p_tide64) +log(p_wisk64) + week,
+                data = detergent_df_nonpromo)
+summary(tide128lm)
+```
+
+\medskip
+Tide 64oz is not statistically significant in this case, which could be interpreted as changes in Tide 64oz price will not have a significant impact on Tide 128oz demand. This indicates limited cannibalization within Tide products.
+
+\medskip
+
+**Tide 64 oz**
+```{r}
+tide64lm = glm(log(q_tide64/acv) ~  log(p_tide64) + log(p_tide128) + log(p_wisk64) + week,
+               data = detergent_df_nonpromo)
+summary(tide64lm)
+```
+
+
+**Regression Plot**
+```{r, fig.width = 6, fig.height = 4, fig.align = "center"}
+detergent_df %>% 
+  select("store":"p_tide64") %>%
+  filter(promoflag == 0) %>% 
+  pivot_longer(cols = q_tide128:p_tide64, names_to = c("variable", "product"),
+               names_sep = "_") %>% 
+  pivot_wider(id_cols = c(product, store, week, acv),
+                   names_from = variable, values_from = value)  %>%
+  mutate(velocity = q/acv) %>% 
+  ggplot(data = ., aes(x = week, y = log(velocity), color = product)) + 
+  geom_point(alpha = 0.5, size = 0.1) + 
+  geom_smooth(method = "lm", se = FALSE)
+
+```
+
+\medskip
+Similar to the previous analysis, Tide 128 oz is not statistically significant for Tide 64 oz in this case, which could be interpreted as changes in Tide 128oz price will not have a significant impact on Tide 64oz demand. This indicates limited cannibalization within Tide products.
+
+Interestingly, a 1% increase in Wisk 64oz price will lead to 0.52% decrease in Tide 64oz demand according to this model. Further investigation will need to be done on this issue. 
+
+Intuitively, once the products are not on sale, customers tend to be less price sensitive on the base price. We need to analyze store fixed effects for a better model. Controlling promotion is not a substantial improvement of the model.
+
+\medskip
+
+
+
+## Store fixed effects
+
+The log-linear demand models were re-estimated for the two Tide products including a time trend and store fixed effects using the data for the non-promoted store-weeks. 
+
+\medskip
+
+*lfe package* is installed and used to estimate models with fixed effects. "lfe" stands for linear fixed effects. When using the lfe package we estimate a regression model using `felm` (fixed effects linear model) instead of `lm`.
+
+\medskip
+
+**Dependent Variable Selection**
+
+When using store fixed effects we can simply use `log(q)` as dependent variable. Two models are built with `log(q/acv)` and `log(q)` as dependent variables. The results are compared.
+
+\medskip
+
+**Tide 128 oz with `log(q/acv)` as the dependent variable**
+```{r}
+tide128lm = felm(log(q_tide128/acv) ~ log(p_tide128) + log(p_tide64) +log(p_wisk64) + week
+                 | store, data = detergent_df_nonpromo)
+summary(tide128lm)
+#Since p_tide 64 p value is too large, reject it.
+
+#Tide 128 model improved a lot
+```
+\medskip
+
+**Tide 128 oz with `log(q)` as the dependent variable**
+```{r}
+tide128lm = felm(log(q_tide128) ~ log(p_tide128) + log(p_tide64) +log(p_wisk64) + week
+                 | store, data = detergent_df_nonpromo)
+summary(tide128lm)
+
+#Identical model as felm(log(q_tide128/acv))
+```
+\medskip
+
+**Tide 64 oz with `log(q/acv)` as the dependent variale**
+```{r}
+tide64lm = felm(log(q_tide64/acv) ~  log(p_tide64) + log(p_tide128) + log(p_wisk64) + week
+                | store, data = detergent_df_nonpromo)
+summary(tide64lm)
+
+#Tide 64 model also improved, but not as much as the Tide128 model
+```
+\medskip
+
+**Tide 64 oz with `log(q)` as the dependent variable**
+```{r}
+tide64lm = felm(log(q_tide64) ~ log(p_tide128) + log(p_tide64) +log(p_wisk64) + week
+                | store, data = detergent_df_nonpromo)
+summary(tide64lm)
+
+#Identical model as felm(log(q_tide64/acv))
+```
+
+\medskip
+From the results for the two models for the two detergents, it is clear that the coefficients are same. When using store fixed effects the elasticity and time trend estimates are identical irrespective of whether we use the log of the velocity or the log of units as dependent variable, because when we look at linear fixed effects, each store is its own category. Therefore the attempt to take into account of ACV in the modeling result is no longer necessary here.
+
+\medskip
+
+**Model Specification Improvement**
+
+For Tide 128 oz, the new model estimates show a smaller own price elasticity. The cross price elasticities are more reasonable. The cross price elasticity of the Wisk 64 oz to the Tide 128 oz is large. The model improved with reasonable price elasticities.
+
+\medskip
+
+
+\medskip
+For Tide 64 oz, the own price elasticity is smaller. The cross price elasticity of the Tide 128 oz to the Tide 64 oz is 0.9. The coefficient for the Wisk 64 oz is not statistically significant and we cannot derive any conclusions for the brand difference. The model improved with reasonable price elasticities but more study is needed to conclude the cross price elasticity for Wisk 64 to Tide 64.
+
+This looks like 128oz is cannibalizing 64oz Tide. But Tide 64oz price has no effect on Tide 128. Since now Tide 64oz has a relatively low elasticity we could consider increasing its price. 
+
+\medskip
+
+\newpage
+
+
+
+
+# Pricing and profitability analysis
+
+Tide's retail margin at Dominick's is 25 percent, and P&G's marginal cost of producing Tide laundry detergent is 2.7 cents per oz.
+
+*Base (regular) prices* are calculated using the data for the **non-promoted** store-weeks, as follows:
+$$\text{base price of Tide 128 = mean of price of Tide 128 across non-promoted store-weeks}$$
+
+A similar calculation for Tide 64 is performed.
+
+The *base volume* as average yearly chain-level volume sales is calculated as follows,
+$$\text{base volume of Tide 128 = no. of stores} \times 52 \times \text{mean sales of Tide 128}$$
+
+A similar calculation for Tide 64 is performed.
+
+\medskip
+
+**Base Price and Volume**
+```{r}
+BasePrice_Tide128 = mean(detergent_df_nonpromo$p_tide128)
+BasePrice_Tide64 = mean(detergent_df_nonpromo$p_tide64)
+BaseVolume_Tide128 = 86*52*mean(detergent_df$q_tide128)
+BaseVolume_Tide64 = 86*52*mean(detergent_df$q_tide64)
+BaseTable = data.frame(BasePrice = c(BasePrice_Tide128, BasePrice_Tide64),
+                       BaseVolume = c(BaseVolume_Tide128, BaseVolume_Tide64),
+                       row.names = c('Tide128', 'Tide64'))
+print(BaseTable)
+```
+
+\medskip
+The base price for the Tide 128 oz is $8.47 and the base price for the Tide 64 oz is $4.40. The base volume for the Tide 128 oz and the Tide 64 oz are 363,197 and 327,717.
+\bigskip
+
+```{r, include = FALSE}
+margin = 0.25
+vcoz = 0.027
+
+bptide128 = mean(detergent_df_nonpromo$p_tide128)
+bptide64 = mean(detergent_df_nonpromo$p_tide64)
+
+bvtdie128 = length(unique(detergent_df$store))*52*mean(detergent_df$q_tide128)
+print(bvtdie128)
+bvtdie64 = length(unique(detergent_df$store))*52*mean(detergent_df$q_tide64)
+print(bvtdie64)
+```
+
+**1. The new expected volume to price changes**
+```{r}
+b128_128 = summary(tide128lm)$coef[1,1]
+b64_128 = summary(tide64lm)$coef[1,1]
+b64_64 = summary(tide64lm)$coef[2,1]
+#(i)
+new_q_tide128 = BaseVolume_Tide128*(1.05^b128_128)
+print(new_q_tide128)
+new_q_tide64 = BaseVolume_Tide64*(1.05^b64_128 * 1.05^b64_64)
+print(new_q_tide64)
+
+#(ii)
+new_q_tide128 = BaseVolume_Tide128*(0.95^b128_128)
+print(new_q_tide128)
+new_q_tide64 = BaseVolume_Tide64*(0.95^b64_128 * 0.95^b64_64)
+print(new_q_tide64)
+
+#(iii)
+new_q_tide128 = BaseVolume_Tide128*(1.05^b128_128)
+print(new_q_tide128)
+new_q_tide64 = BaseVolume_Tide64*(1.05^b64_128 * 0.95^b64_64)
+print(new_q_tide64)
+
+#(iv)
+new_q_tide128 = BaseVolume_Tide128*(0.95^b128_128)
+print(new_q_tide128)
+new_q_tide64 = BaseVolume_Tide64*(0.95^b64_128 * 1.05^b64_64)
+print(new_q_tide64)
+
+```
+
+\medskip
+(i) With all others fixed, a simultaneous 5% price increase for Tide 128 and Tide 64 would generate a new total volume of 323321.3 for Tide 128 oz and 318513.2 for Tide 64 oz.
+
+\medskip
+(ii) With all others fixed, a simultaneous 5% price decrease for Tide 128 and Tide 64 would generate a new total volume of 410431.7 for Tide 128 oz and 337678.7 for Tide 64 oz.
+
+\medskip
+(iii) A simultaneous 5 percent increase in the price of Tide 128 and 5 percent decrease in the price of Tide 64
+With all others fixed, a simultaneous 5% price increase for Tide 128 and 5% price decrease for Tide 64 would generate a new total volume of 323321.3 for Tide 128 oz and 369612 for Tide 64 oz.
+
+\medskip
+(iv) With all others fixed, a simultaneous 5% price decrease for Tide 128 and 5% price increase for Tide 64 would generate a new total volume of 410431.7 for Tide 128 oz and 290994.8 for Tide 64 oz.
+
+\bigskip
+
+**2. The total new expected profits for the price changes**
+```{r}
+profit_tide128= 0
+profit_tide64 = 0
+total_profit = profit_tide128 + profit_tide64
+
+#base
+profit_tide128 = BaseVolume_Tide128 * (bptide128*(1 - margin) - vcoz*128)
+profit_tide64 = bvtdie64 * (bptide64*(1 - margin) - vcoz*64)
+profit_tide128
+profit_tide64
+total_profit = profit_tide128 + profit_tide64
+total_profit
+#Base profit 1568306
+
+
+pc_tide128 = -0.05
+pc_tide64  = 0.05
+#new_q_tide128 = bvtdie128*((1 + pc_tide128)^b128_128)
+#new_q_tide64 = bvtdie64*((1 + pc_tide128)^b64_128 * (1 + pc_tide64)^b64_64)
+
+profit_tide128 = BaseVolume_Tide128*((1 + pc_tide128)^b128_128) * (bptide128*((1 + pc_tide128) *(1 - margin)) - vcoz*128)
+
+profit_tide64 = BaseVolume_Tide64*((1 + pc_tide128)^b64_128 * (1 + pc_tide64)^b64_64) * (bptide64*((1 + pc_tide64) *(1 - margin)) - vcoz*64)
+
+total_profit = profit_tide128 + profit_tide64
+total_profit
+
+#(i)
+#total profit is 1593502
+
+#(ii)
+#total profit is 1534799
+
+#(iii)
+#total profit is 1560281
+
+#(iv)
+#total profit is 1565150
+
+```
+\medskip
+(i) A simultaneous 5% increase in the prices of Tide 128 and Tide 64 would generate total profits of 1593502. 
+
+(ii) A simultaneous 5% decrease in the prices of Tide 128 and Tide 64 would generate total profits of 1534799. 
+
+(iii) A simultaneous 5% increase in the price of Tide 128 and 5% decrease in the price of Tide 64 would generate total profits of 1560281. 
+
+(iv) A simultaneous 5% decrease in the price of Tide 128 and 5% increase in the price of Tide 64 would generate total profits of 1565150. 
+
+The base profit without any price changes is 1568306. We observed that increasing 5% on both types of products generates the most profits in addition to the base profit. Thus, we recommend increasing prices on both Tide 128 and Tide 64 to coup more profits.
+
+\newpage
+
+
+
+
+# Summary
+
+(1) The extent of cannibalization within the Tide product line
+
+Based on our analysis in 3.4, Tide 64 is not statistically significant enough to determine a substantial impact on Tide 128 sales; therefore we believe Tide 64 will not cannibalize Tide 128. However, for Tide 64, 1% increase in Tide 128 price change will lead to 0.9% increase in Tide 64 sales, and it is statistically significant. So we conclude Tide 128 is likely to cannibalize Tide 64.
+
+\medskip
+
+(2) The competitive threat from Wisk for the Tide product line
+
+Tide faces a competitive threat from Wisk. Based on our model in 3.4, 1% price increase in Wisk 64 will lead to an increase of 1.16% in Tide 128 sales. However, the model is not statistically significant enough to analyze its effect on Tide 64 since the P value is too large (>10%). It is quite interesting as intuitively we would think Wisk 64 competes, if at all, against Tide 64 due to similar size feature. We perceive it might due to the various store placement. For example, Costco only carries Tide 128 and Wisk 64, so in this scenario only Tide 128 is impacted by a change in Wisk 64.
+
+\medskip
+
+(3) The current pricing tactics evaluation and recommendation
+
+Current pricing is not optimal for short term profit. Based on our observation in Q.4, increasing Tide 64oz and Tide 128oz price by 5% offers the highest profit; this indicates that in order to maximize profit, we can consider increase prices. If company doesn't focus on increasing its market penetration and share, we suggest rise up price for both product.
+
