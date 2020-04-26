@@ -346,6 +346,9 @@ predict(felm_q_tide128)
 # Summarize your findings
 
 (1) What is the extent of cannibalization within the Tide product line? 
+
+we should increase price for both of the products. 
+
 (2) Does Tide face a competitive threat from Wisk?
 (3) How do you evaluate the current pricing tactics? Do you recommend changes?
 
